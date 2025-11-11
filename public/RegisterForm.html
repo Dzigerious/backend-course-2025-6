@@ -1,0 +1,42 @@
+<!DOCTYPE html>
+<html lang="uk">
+<head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Реєстрація пристрою</title>
+</head>
+<body>
+
+    <header>
+        <h1>Форма реєстрації інвентаря</h1>
+    </header>
+
+    <main>
+        <form action="/register" method="POST" enctype="multipart/form-data">
+
+            <div>
+                <label for="photo">Фото</label>
+                <input type="file" id="photo" name="photo" accept="image/*" />
+            </div>
+
+            <div>
+                <label for="inventory_name">Назва речі *</label>
+                <input type="text" id="inventory_name" name="inventory_name" required placeholder="Наприклад: Ноутбук Lenovo IdeaPad 3" />
+            </div>
+
+            <div>
+                <label for="description">Опис</label>
+                <textarea id="description" name="description" rows="3" placeholder="Вкажіть стан, колір, модель тощо"></textarea>
+            </div>
+
+            <button type="submit">Зареєструвати</button>
+
+        </form>
+    </main>
+
+    <footer>
+        <p>Сервіс інвентаризації © 2025</p>
+    </footer>
+
+</body>
+</html>

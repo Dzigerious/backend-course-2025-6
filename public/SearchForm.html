@@ -1,0 +1,42 @@
+<!DOCTYPE html>
+<html lang="uk">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>GoodPhone — Додати товар</title>
+</head>
+<body>
+    <header>
+        <h1>GoodPhone — Додати телефон</h1>
+    </header>
+
+    <main>
+        <form class="form__add" action="/register" method="POST" enctype="multipart/form-data">
+            <div class="form__group">
+                <label for="inventory_name">Назва телефону *</label>
+                <input type="text" id="inventory_name" name="inventory_name" required placeholder="Наприклад: iPhone 15 Pro 256GB">
+            </div>
+>
+            <div class="form__group">
+                <label for="description">Опис</label>
+                <textarea id="description"name="description" rows="3" placeholder="Стан, колір, комплектація, гарантія тощо"></textarea>
+            </div>
+
+            <div class="form__group">
+                <label for="price">Ціна (грн)</label>
+                <input type="number" id="price" name="price" min="0" step="1" placeholder="Наприклад: 29999">
+            </div>
+
+            <div class="form__group">
+                <label for="photo">Фото телефону</label>
+                <input type="file" id="photo" name="photo" accept="image/*">
+            </div>
+
+            <button type="submit">Додати товар</button>
+        </form>
+    </main>
+
+    <footer>
+    </footer>
+</body>
+</html>
