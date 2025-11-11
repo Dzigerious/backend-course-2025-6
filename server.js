@@ -3,7 +3,7 @@ const app = express();
 const fs = require('fs');
 const { constants } = require('fs');
 const { program } = require('commander');
-const { v4: uuidv4 } = require("uuid");
+const { v4: uuidv4, validate: uuidValidate, version: uuidVersion } = require("uuid");
 const path = require('path');
 const multer = require('multer');
 const fsp = require('fs/promises');
@@ -61,7 +61,7 @@ const upload = multer({ storage });
 async function readInventory() {
   try {
     try {
-      await fsp.access(inventoryFile, fs.constants.F_OK);
+      await fsp.access(inventoryFile, fs.constants.F_OK); //F_OK - checks that file are idk, created
     } catch {
       return [];
     }
@@ -89,6 +89,9 @@ async function saveInventory(items) {
   }
 }
 
+function isUuidV4(id) {
+  return uuidValidate(id) && uuidVersion(id) === 4;
+}
 
 app.use(express.static(__dirname + `/public`));
 app.use('/cache', express.static(cacheDir));
@@ -141,6 +144,28 @@ app.get('/inventory', async (req, res) => {
     res.status(500).send('Failed to load JSON');
   }
 })
+
+app.get('/inventory/:id', async (req, res) => {
+    const { id } = req.params;
+    
+    if (!isUuidV4(id)) {
+      return res.status(400).json({ message: "Ivalid id format(bad Request)" });
+    }
+
+    try {
+      const items = await readInventory();
+      const item = items.find(i => i.id === id);
+
+      if(!item) { //valid uuid but didnt find the exact element
+        return res.status(404).json({ message: 'Ited not found (404)' })
+      }
+
+      return res.json(item);
+    } catch (err) {
+      console.error("Error in get /item/:id");
+      return res.status(500).send('Internal server Error');
+    }
+});
 
 app.listen(port, host, () => {
   console.log(`server is working on http://${host}:${port}`);
