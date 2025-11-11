@@ -1,7 +1,6 @@
 const express = require("express");
 const app = express();
 const fs = require('fs');
-const { access, mkdir } = require('fs/promises');
 const { constants } = require('fs');
 const { program } = require('commander');
 const { v4: uuidv4 } = require("uuid");
@@ -26,10 +25,10 @@ const inventoryFile = path.join(cacheDir, 'inventory.json');
 
 const ensureCacheDir = async (dirPath) => {
   try {
-    await access(dirPath, constants.F_OK);
+    await fsp.access(dirPath, constants.F_OK);
     console.log("Cache dir already exists");
   } catch {
-    await mkdir(dirPath, { recursive: true });
+    await fsp.mkdir(dirPath, { recursive: true });
     console.log("Created new cache dir");
   }
 };
@@ -47,7 +46,17 @@ async function ensureInventoryFile() { //could just insert inside readInventory 
 ensureCacheDir(cacheDir);
 ensureInventoryFile();
 
-const upload = multer({ dest: cacheDir });
+const storage = multer.diskStorage({
+  destination: (req, file, cb) => {
+    cb(null, cacheDir);
+  }, 
+  filename: (req, file, cb) => {
+    const ext = path.extname(file.originalname) || '';
+    cb(null, uuidv4() + ext);
+  }
+})
+
+const upload = multer({ storage });
 
 async function readInventory() {
   try {
@@ -80,23 +89,9 @@ async function saveInventory(items) {
   }
 }
 
-const readJSON = function (filePath) {
-  fs.readFile(filePath, 'utf-8', (err, data) => {
-    if (err) {
-      console.error('Erro of reading JSON file', err);
-      return;
-    }
-
-    try {
-      const jsonData = JSON.parse(data);
-      console.log("Json File: ", jsonData);
-    } catch (err) {
-      console.error('Failed parsing JSON', err);
-    }
-  });
-};
 
 app.use(express.static(__dirname + `/public`));
+app.use('/cache', express.static(cacheDir));
 
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
@@ -113,7 +108,7 @@ app.post('/register', upload.single('photo'), async (req, res) => {
   }
 
   const id = uuidv4();
-  const photoPath = req.file ? req.file.filename : null;
+  const photoPath = req.file ? `http://${host}:${port}/cache/${req.file.filename}` : null;
 
   const newItem = {
     id: id,
@@ -136,6 +131,16 @@ app.post('/register', upload.single('photo'), async (req, res) => {
     return res.status(500).send('Internal Server Error');
   }
 });
+
+app.get('/inventory', async (req, res) => {
+  try{
+    const inventory = await readInventory();
+    res.status(200).json(inventory)
+  } catch (err) {
+    console.error('Err');
+    res.status(500).send('Failed to load JSON');
+  }
+})
 
 app.listen(port, host, () => {
   console.log(`server is working on http://${host}:${port}`);
