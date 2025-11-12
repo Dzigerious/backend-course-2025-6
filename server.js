@@ -1,7 +1,6 @@
 const express = require("express");
 const app = express();
 const fs = require('fs');
-const { constants } = require('fs');
 const { program } = require('commander');
 const { v4: uuidv4, validate: uuidValidate, version: uuidVersion } = require("uuid");
 const path = require('path');
@@ -25,7 +24,7 @@ const inventoryFile = path.join(cacheDir, 'inventory.json');
 
 const ensureCacheDir = async (dirPath) => {
   try {
-    await fsp.access(dirPath, constants.F_OK);
+    await fsp.access(dirPath, fs.constants.F_OK);
     console.log("Cache dir already exists");
   } catch {
     await fsp.mkdir(dirPath, { recursive: true });
@@ -166,6 +165,43 @@ app.get('/inventory/:id', async (req, res) => {
       return res.status(500).send('Internal server Error');
     }
 });
+
+app.put('/inventory/:id', async (req, res) => {
+  const { id } = req.params;
+    
+  if (!isUuidV4(id)) {
+    return res.status(400).json({ message: "Ivalid id format(bad Request)" });
+  }
+  try {
+    const items = await readInventory();
+
+    const index = items.findIndex(item => item.id === id);
+    if (index === -1) {
+      return res.status(404).json({message: "Item not found (404)"});
+    }
+
+    const { name, description } = req.body;
+
+    if(!name && !description) {
+      return res.status(400).json({ message: "Nothing to update" });
+    }
+
+    if (name) {
+      items[index].name = name;
+    }
+
+    if (description) {
+      items[index].description = description;
+    }
+
+    await saveInventory(items);
+
+    return res.status(200).json({Message: "Item updated", item: items[index]})
+  } catch (err) {
+    console.error('Error in updating Name or description')
+    res.status(500).send('Server Error')
+  } 
+}) 
 
 app.listen(port, host, () => {
   console.log(`server is working on http://${host}:${port}`);
