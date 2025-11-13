@@ -203,6 +203,51 @@ app.put('/inventory/:id', async (req, res) => {
   } 
 }) 
 
+app.get('/inventory/:id/photo', async (req, res) => {
+    const { id } = req.params;
+    
+    if (!isUuidV4(id)) {
+      return res.status(400).json({ message: "Ivalid id format(bad Request)" });
+    }
+
+    try{
+      const items = await readInventory();
+      const item = items.find(i => i.id === id);
+
+      if(!item || !item.photo) {
+        return res.status(404).json({ message: "Photo not found(404)" })
+      }
+
+      const filename = path.basename(item.photo);
+      const filePath = path.join(cacheDir, filename);
+      
+      return res.sendFile(filePath);
+    } catch (err){
+      console.error("Error in GET /inventory/:id/photo", err);
+      return res.status(500).send('Internal Server Error');
+    }
+})
+
+
+
+// app.put('/inventory/:id/photo', async (req, res) => {
+//   const { id } = req.params;
+    
+//   if (!isUuidV4(id)) {
+//     return res.status(400).json({ message: "Ivalid id format(bad Request)" });
+//   } try{
+//     const items = await readInventory();
+
+//     const index = items.findIndex(item => item.id === id);
+//     if (index === -1) {
+//     return res.status(404).json({message: "Item not found (404)"});
+//     } 
+
+//     const { photo } = req.body;
+
+//   } catch (err){}
+// })
+
 app.listen(port, host, () => {
   console.log(`server is working on http://${host}:${port}`);
 });
