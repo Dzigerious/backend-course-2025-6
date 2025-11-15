@@ -224,29 +224,92 @@ app.get('/inventory/:id/photo', async (req, res) => {
       return res.sendFile(filePath);
     } catch (err){
       console.error("Error in GET /inventory/:id/photo", err);
-      return res.status(500).send('Internal Server Error');
+      return res.status(500).send('Server Error');
     }
 })
 
-
-
-// app.put('/inventory/:id/photo', async (req, res) => {
-//   const { id } = req.params;
+app.put('/inventory/:id/photo', upload.single('photo'), async (req, res) => {
+  const { id } = req.params;
     
-//   if (!isUuidV4(id)) {
-//     return res.status(400).json({ message: "Ivalid id format(bad Request)" });
-//   } try{
-//     const items = await readInventory();
+  if (!isUuidV4(id)) {
+    return res.status(400).json({ message: "Ivalid id format(bad Request)" });
+  } try{
+    const items = await readInventory();
+    const index = items.findIndex(item => item.id === id);
 
-//     const index = items.findIndex(item => item.id === id);
-//     if (index === -1) {
-//     return res.status(404).json({message: "Item not found (404)"});
-//     } 
+    if(index === -1){
+      return res.status(404).json({ message: "not Found (404)" });
+    }
 
-//     const { photo } = req.body;
+    if (!req.file) {
+      return res.status(400).json({message: 'Photo file is required'});
+    }
 
-//   } catch (err){}
-// })
+    const oldPhotoUrl = items[index].photo
+    if (oldPhotoUrl) {
+      const oldFilename = path.basename(oldPhotoUrl);
+      const oldFilePath = path.join(cacheDir, oldFilename);
+
+      try {
+        await fsp.unlink(oldFilePath)
+      } catch (err) {
+        console.error("Cannot delete old photo: ", err.message);
+      }
+    }
+
+    const newPhotoUrl = `http://${host}:${port}/cache/${req.file.filename}`;
+    items[index].photo = newPhotoUrl;
+
+    await saveInventory(items);
+
+    return res.status(200).json({ message: 'Photo updated' });
+    
+  } catch (err){
+    console.error("error in updating photo", err);
+    return res.status(500).send("Error in put(photo)");
+  }
+})
+
+app.delete('/inventory/:id', async (req, res) => {
+  const { id } = req.params;
+
+  if (!isUuidV4(id)) {
+    return res.status(400).json({ message: "Ivalid id format(bad Request)" });
+  }
+
+  try {
+    const items = await readInventory();
+
+    const index = items.findIndex(item => item.id === id);
+    if (index === -1){
+      console.error('Error 404 not found item to delete')
+      return res.status(404).json({message: 'Error 404, not found'});
+    }
+
+    const itemToDelete = items[index];
+    
+    if (itemToDelete.photo) {
+      const filename = path.basename(itemToDelete.photo);
+      const filePath = path.join(cacheDir, filename);
+      
+      try {
+        await fsp.unlink(filePath);
+        console.log(`Photo file was deleted ${filePath}`);
+      } catch (err) {
+        console.error('Cannot delete photofile: ', err.message);
+      }
+    }  
+    items.splice(index, 1);
+
+    await saveInventory(items);
+    return res.status(200).json({Message: `Item deleted`, deletedItem: itemToDelete}); 
+  } catch (err){
+    console.error('Error in delete /inventory/:id', err);
+    return res.status(500).send('Internal Server Error');
+  }
+})
+
+  
 
 app.listen(port, host, () => {
   console.log(`server is working on http://${host}:${port}`);
