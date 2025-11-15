@@ -309,6 +309,43 @@ app.delete('/inventory/:id', async (req, res) => {
   }
 })
 
+app.post('/search', async (req, res) => {
+  const { id, has_photo } = req.body;
+
+  if (!id) {
+    return res.status(400).json({message: "Fiel 'id' is required(400)"});
+  }
+
+  if (!isUuidV4(id)) {
+    return res.status(400).json({ message: "Invalid id format (Bad Request)" });
+  }
+
+  try {
+    const items = await readInventory();
+
+    const item = items.find(i => i.id === id);
+    if (!item) {
+      return res.status(404).json({message: 'Item not found(404)'});
+    }
+
+    const result = {...item}; // with spread operator i create a new value
+ 
+    if (has_photo && item.photo) {
+      const photoText = `Photo: ${item.photo}`;
+      if (result.description) {
+        result.description += photoText;
+      } else {
+        result.description = photoText.trim();
+      }
+    }
+
+    return res.status(200).json(result);
+  } catch (err) {
+    console.error("Error in POST /search: ", err);
+    return res.status(500).send("Internal Server ERROR");
+  }
+})
+
   
 
 app.listen(port, host, () => {
