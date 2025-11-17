@@ -91,7 +91,6 @@ async function saveInventory(items) {
 function isUuidV4(id) {
   return uuidValidate(id) && uuidVersion(id) === 4;
 }
-
 app.use(express.static(__dirname + `/public`));
 app.use('/cache', express.static(cacheDir));
 
@@ -221,6 +220,7 @@ app.get('/inventory/:id/photo', async (req, res) => {
       const filename = path.basename(item.photo);
       const filePath = path.join(cacheDir, filename);
       
+      res.type('image/jpeg')
       return res.sendFile(filePath);
     } catch (err){
       console.error("Error in GET /inventory/:id/photo", err);
@@ -313,7 +313,7 @@ app.post('/search', async (req, res) => {
   const { id, has_photo } = req.body;
 
   if (!id) {
-    return res.status(400).json({message: "Fiel 'id' is required(400)"});
+    return res.status(400).json({ message: "Field 'id' is required (400)" });
   }
 
   if (!isUuidV4(id)) {
@@ -322,31 +322,65 @@ app.post('/search', async (req, res) => {
 
   try {
     const items = await readInventory();
-
     const item = items.find(i => i.id === id);
+
     if (!item) {
-      return res.status(404).json({message: 'Item not found(404)'});
+      return res.status(404).json({ message: 'Item not found (404)' });
     }
 
-    const result = {...item}; // with spread operator i create a new value
- 
-    if (has_photo && item.photo) {
-      const photoText = `Photo: ${item.photo}`;
-      if (result.description) {
-        result.description += photoText;
-      } else {
-        result.description = photoText.trim();
+    const hasPhotoFlag =
+      has_photo === 'on' ||
+      has_photo === 'true' ||
+      has_photo === true;
+
+    if (hasPhotoFlag) {
+      if (!item.photo) {
+        return res.status(404).json({ message: 'Photo not found (404)' });
       }
+
+      return res.status(200).json({
+        id: item.id,
+        name: item.name,
+        description: item.description || "",
+        photo: item.photo
+      });
     }
+
+    const result = {
+      id: item.id,
+      name: item.name,
+      description: item.description || ""
+    };
 
     return res.status(200).json(result);
   } catch (err) {
     console.error("Error in POST /search: ", err);
     return res.status(500).send("Internal Server ERROR");
   }
-})
+});
 
-  
+
+app.all('/register', (req, res) => {
+  return res.status(405).send('Method Not Allowed');
+});
+
+app.all('/inventory', (req, res) => {
+  return res.status(405).send('Method Not Allowed');
+});
+
+app.all('/inventory/:id', (req, res) => {
+  return res.status(405).send('Method Not Allowed');
+});
+
+app.all('/inventory/:id/photo', (req, res) => {
+  return res.status(405).send('Method Not Allowed');
+});
+
+app.all('/search', (req, res) => {
+  return res.status(405).send('Method Not Allowed');
+});
+
+
 
 app.listen(port, host, () => {
   console.log(`server is working on http://${host}:${port}`);
