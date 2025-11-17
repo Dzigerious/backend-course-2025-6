@@ -6,6 +6,9 @@ const { v4: uuidv4, validate: uuidValidate, version: uuidVersion } = require("uu
 const path = require('path');
 const multer = require('multer');
 const fsp = require('fs/promises');
+const swaggerUi = require('swagger-ui-express');
+const swaggerJsdoc = require('swagger-jsdoc');
+const cors = require('cors');
 
 program
   .requiredOption('-h, --host <host>', 'Server host')
@@ -22,6 +25,25 @@ const cache = options.cache;
 const cacheDir = path.join(__dirname, cache);
 const inventoryFile = path.join(cacheDir, 'inventory.json');
 
+const swaggerOptions = {
+  definition: {
+    openapi: '3.0.0',
+    info: {
+      title: 'Inventory Management API',
+      version: '1.0.0',
+      description: 'API for managing inventory items with photos',
+    },
+    servers: [
+      {
+        url: `http://${host}:${port}`,
+      },
+    ],
+  },
+  apis: ['./server.js'],
+};
+
+const swaggerSpec = swaggerJsdoc(swaggerOptions);
+
 const ensureCacheDir = async (dirPath) => {
   try {
     await fsp.access(dirPath, fs.constants.F_OK);
@@ -32,7 +54,7 @@ const ensureCacheDir = async (dirPath) => {
   }
 };
 
-async function ensureInventoryFile() { //could just insert inside readInventory function
+async function ensureInventoryFile() {
   try {
     await fsp.access(inventoryFile, fs.constants.F_OK);
     console.log("Inventory.json already exists");
@@ -60,7 +82,7 @@ const upload = multer({ storage });
 async function readInventory() {
   try {
     try {
-      await fsp.access(inventoryFile, fs.constants.F_OK); //F_OK - checks that file are idk, created
+      await fsp.access(inventoryFile, fs.constants.F_OK);
     } catch {
       return [];
     }
@@ -91,16 +113,76 @@ async function saveInventory(items) {
 function isUuidV4(id) {
   return uuidValidate(id) && uuidVersion(id) === 4;
 }
+
 app.use(express.static(__dirname + `/public`));
 app.use('/cache', express.static(cacheDir));
 
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 
+app.use('/docs', swaggerUi.serve, swaggerUi.setup(swaggerSpec));
+app.use(cors());
+/**
+ * @swagger
+ * components:
+ *   schemas:
+ *     Item:
+ *       type: object
+ *       properties:
+ *         id:
+ *           type: string
+ *           format: uuid
+ *         name:
+ *           type: string
+ *         description:
+ *           type: string
+ *         photo:
+ *           type: string
+ *           nullable: true
+ */
+
+/**
+ * @swagger
+ * /:
+ *   get:
+ *     summary: Server status check
+ *     responses:
+ *       200:
+ *         description: Server is working
+ */
 app.get('/', (req, res) => {
   res.send("server is working");
 });
 
+/**
+ * @swagger
+ * /register:
+ *   post:
+ *     summary: Register a new inventory item
+ *     requestBody:
+ *       required: true
+ *       content:
+ *         multipart/form-data:
+ *           schema:
+ *             type: object
+ *             required:
+ *               - inventory_name
+ *             properties:
+ *               inventory_name:
+ *                 type: string
+ *               description:
+ *                 type: string
+ *               photo:
+ *                 type: string
+ *                 format: binary
+ *     responses:
+ *       201:
+ *         description: Item created successfully
+ *       400:
+ *         description: Inventory name is required
+ *       500:
+ *         description: Internal server error
+ */
 app.post('/register', upload.single('photo'), async (req, res) => {
   const { inventory_name, description } = req.body;
 
@@ -133,6 +215,23 @@ app.post('/register', upload.single('photo'), async (req, res) => {
   }
 });
 
+/**
+ * @swagger
+ * /inventory:
+ *   get:
+ *     summary: Get all inventory items
+ *     responses:
+ *       200:
+ *         description: List of all items
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: array
+ *               items:
+ *                 $ref: '#/components/schemas/Item'
+ *       500:
+ *         description: Failed to load inventory
+ */
 app.get('/inventory', async (req, res) => {
   try{
     const inventory = await readInventory();
@@ -143,6 +242,32 @@ app.get('/inventory', async (req, res) => {
   }
 })
 
+/**
+ * @swagger
+ * /inventory/{id}:
+ *   get:
+ *     summary: Get item by ID
+ *     parameters:
+ *       - in: path
+ *         name: id
+ *         required: true
+ *         schema:
+ *           type: string
+ *           format: uuid
+ *     responses:
+ *       200:
+ *         description: Item details
+ *         content:
+ *           application/json:
+ *             schema:
+ *               $ref: '#/components/schemas/Item'
+ *       400:
+ *         description: Invalid ID format
+ *       404:
+ *         description: Item not found
+ *       500:
+ *         description: Internal server error
+ */
 app.get('/inventory/:id', async (req, res) => {
     const { id } = req.params;
     
@@ -154,7 +279,7 @@ app.get('/inventory/:id', async (req, res) => {
       const items = await readInventory();
       const item = items.find(i => i.id === id);
 
-      if(!item) { //valid uuid but didnt find the exact element
+      if(!item) {
         return res.status(404).json({ message: 'Ited not found (404)' })
       }
 
@@ -165,6 +290,39 @@ app.get('/inventory/:id', async (req, res) => {
     }
 });
 
+/**
+ * @swagger
+ * /inventory/{id}:
+ *   put:
+ *     summary: Update item name or description
+ *     parameters:
+ *       - in: path
+ *         name: id
+ *         required: true
+ *         schema:
+ *           type: string
+ *           format: uuid
+ *     requestBody:
+ *       required: true
+ *       content:
+ *         application/json:
+ *           schema:
+ *             type: object
+ *             properties:
+ *               name:
+ *                 type: string
+ *               description:
+ *                 type: string
+ *     responses:
+ *       200:
+ *         description: Item updated successfully
+ *       400:
+ *         description: Invalid ID or nothing to update
+ *       404:
+ *         description: Item not found
+ *       500:
+ *         description: Server error
+ */
 app.put('/inventory/:id', async (req, res) => {
   const { id } = req.params;
     
@@ -202,6 +360,33 @@ app.put('/inventory/:id', async (req, res) => {
   } 
 }) 
 
+/**
+ * @swagger
+ * /inventory/{id}/photo:
+ *   get:
+ *     summary: Get item photo
+ *     parameters:
+ *       - in: path
+ *         name: id
+ *         required: true
+ *         schema:
+ *           type: string
+ *           format: uuid
+ *     responses:
+ *       200:
+ *         description: Photo file
+ *         content:
+ *           image/jpeg:
+ *             schema:
+ *               type: string
+ *               format: binary
+ *       400:
+ *         description: Invalid ID format
+ *       404:
+ *         description: Photo not found
+ *       500:
+ *         description: Server error
+ */
 app.get('/inventory/:id/photo', async (req, res) => {
     const { id } = req.params;
     
@@ -228,6 +413,40 @@ app.get('/inventory/:id/photo', async (req, res) => {
     }
 })
 
+/**
+ * @swagger
+ * /inventory/{id}/photo:
+ *   put:
+ *     summary: Update item photo
+ *     parameters:
+ *       - in: path
+ *         name: id
+ *         required: true
+ *         schema:
+ *           type: string
+ *           format: uuid
+ *     requestBody:
+ *       required: true
+ *       content:
+ *         multipart/form-data:
+ *           schema:
+ *             type: object
+ *             required:
+ *               - photo
+ *             properties:
+ *               photo:
+ *                 type: string
+ *                 format: binary
+ *     responses:
+ *       200:
+ *         description: Photo updated successfully
+ *       400:
+ *         description: Invalid ID or photo required
+ *       404:
+ *         description: Item not found
+ *       500:
+ *         description: Server error
+ */
 app.put('/inventory/:id/photo', upload.single('photo'), async (req, res) => {
   const { id } = req.params;
     
@@ -270,6 +489,28 @@ app.put('/inventory/:id/photo', upload.single('photo'), async (req, res) => {
   }
 })
 
+/**
+ * @swagger
+ * /inventory/{id}:
+ *   delete:
+ *     summary: Delete inventory item
+ *     parameters:
+ *       - in: path
+ *         name: id
+ *         required: true
+ *         schema:
+ *           type: string
+ *           format: uuid
+ *     responses:
+ *       200:
+ *         description: Item deleted successfully
+ *       400:
+ *         description: Invalid ID format
+ *       404:
+ *         description: Item not found
+ *       500:
+ *         description: Internal server error
+ */
 app.delete('/inventory/:id', async (req, res) => {
   const { id } = req.params;
 
@@ -309,6 +550,40 @@ app.delete('/inventory/:id', async (req, res) => {
   }
 })
 
+/**
+ * @swagger
+ * /search:
+ *   post:
+ *     summary: Search item by ID with optional photo
+ *     requestBody:
+ *       required: true
+ *       content:
+ *         application/x-www-form-urlencoded:
+ *           schema:
+ *             type: object
+ *             required:
+ *               - id
+ *             properties:
+ *               id:
+ *                 type: string
+ *                 format: uuid
+ *               has_photo:
+ *                 type: string
+ *                 enum: [on, true, false]
+ *     responses:
+ *       200:
+ *         description: Item found
+ *         content:
+ *           application/json:
+ *             schema:
+ *               $ref: '#/components/schemas/Item'
+ *       400:
+ *         description: Invalid or missing ID
+ *       404:
+ *         description: Item or photo not found
+ *       500:
+ *         description: Internal server error
+ */
 app.post('/search', async (req, res) => {
   const { id, has_photo } = req.body;
 
