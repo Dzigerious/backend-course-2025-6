@@ -7,8 +7,8 @@ const path = require('path');
 const multer = require('multer');
 const fsp = require('fs/promises');
 const swaggerUi = require('swagger-ui-express');
-const swaggerJsdoc = require('swagger-jsdoc');
-const cors = require('cors');
+const yaml = require('js-yaml');
+const querystring = require('querystring');
 
 program
   .requiredOption('-h, --host <host>', 'Server host')
@@ -25,24 +25,14 @@ const cache = options.cache;
 const cacheDir = path.join(__dirname, cache);
 const inventoryFile = path.join(cacheDir, 'inventory.json');
 
-const swaggerOptions = {
-  definition: {
-    openapi: '3.0.0',
-    info: {
-      title: 'Inventory Management API',
-      version: '1.0.0',
-      description: 'API for managing inventory items with photos',
-    },
-    servers: [
-      {
-        url: `http://${host}:${port}`,
-      },
-    ],
-  },
-  apis: ['./server.js'],
-};
-
-const swaggerSpec = swaggerJsdoc(swaggerOptions);
+let swaggerDocument;
+try {
+  const yamlData = fs.readFileSync(path.join(__dirname, 'swagger.yaml'), 'utf8');
+  swaggerDocument = yaml.load(yamlData);
+} catch (err) {
+  console.error('Error loading swagger.yaml:', err.message);
+  swaggerDocument = null;
+}
 
 const ensureCacheDir = async (dirPath) => {
   try {
@@ -75,7 +65,7 @@ const storage = multer.diskStorage({
     const ext = path.extname(file.originalname) || '';
     cb(null, uuidv4() + ext);
   }
-})
+});
 
 const upload = multer({ storage });
 
@@ -117,72 +107,82 @@ function isUuidV4(id) {
 app.use(express.static(__dirname + `/public`));
 app.use('/cache', express.static(cacheDir));
 
+app.post('/search', (req, res) => {
+  let rawData = '';
+
+  req.on('data', (chunk) => {
+    rawData += chunk.toString();
+  });
+
+  req.on('end', async () => {
+    try {
+      if (!rawData) {
+        return res.status(400).json({ message: "Request body is empty" });
+      }
+
+      const body = querystring.parse(rawData);
+      
+      const { id, has_photo } = body;
+
+      if (!id) {
+        return res.status(400).json({ message: "Field 'id' is required (400)" });
+      }
+
+      if (!isUuidV4(id)) {
+        return res.status(400).json({ message: "Invalid id format (Bad Request)" });
+      }
+
+      const items = await readInventory();
+      const item = items.find(i => i.id === id);
+
+      if (!item) {
+        return res.status(404).json({ message: 'Item not found (404)' });
+      }
+
+      const hasPhotoFlag =
+        has_photo === 'on' ||
+        has_photo === 'true' ||
+        has_photo === true;
+
+      if (hasPhotoFlag) {
+        if (!item.photo) {
+          return res.status(404).json({ message: 'Photo not found (404)' });
+        }
+        
+        return res.status(200).json({
+          id: item.id,
+          name: item.name,
+          description: item.description || "",
+          photo: item.photo
+        });
+      }
+
+      return res.status(200).json({
+        id: item.id,
+        name: item.name,
+        description: item.description || ""
+      });
+
+    } catch (err) {
+      console.error("Error in POST /search: ", err);
+      return res.status(500).send("Internal Server ERROR");
+    }
+  });
+});
+
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 
-app.use('/docs', swaggerUi.serve, swaggerUi.setup(swaggerSpec));
-app.use(cors());
-/**
- * @swagger
- * components:
- *   schemas:
- *     Item:
- *       type: object
- *       properties:
- *         id:
- *           type: string
- *           format: uuid
- *         name:
- *           type: string
- *         description:
- *           type: string
- *         photo:
- *           type: string
- *           nullable: true
- */
+if (swaggerDocument) {
+  app.use('/docs', swaggerUi.serve, swaggerUi.setup(swaggerDocument));
+} else {
+  console.warn('Swagger UI disabled: swagger.yaml not loaded');
+}
 
-/**
- * @swagger
- * /:
- *   get:
- *     summary: Server status check
- *     responses:
- *       200:
- *         description: Server is working
- */
 app.get('/', (req, res) => {
   res.send("server is working");
 });
 
-/**
- * @swagger
- * /register:
- *   post:
- *     summary: Register a new inventory item
- *     requestBody:
- *       required: true
- *       content:
- *         multipart/form-data:
- *           schema:
- *             type: object
- *             required:
- *               - inventory_name
- *             properties:
- *               inventory_name:
- *                 type: string
- *               description:
- *                 type: string
- *               photo:
- *                 type: string
- *                 format: binary
- *     responses:
- *       201:
- *         description: Item created successfully
- *       400:
- *         description: Inventory name is required
- *       500:
- *         description: Internal server error
- */
 app.post('/register', upload.single('photo'), async (req, res) => {
   const { inventory_name, description } = req.body;
 
@@ -215,119 +215,43 @@ app.post('/register', upload.single('photo'), async (req, res) => {
   }
 });
 
-/**
- * @swagger
- * /inventory:
- *   get:
- *     summary: Get all inventory items
- *     responses:
- *       200:
- *         description: List of all items
- *         content:
- *           application/json:
- *             schema:
- *               type: array
- *               items:
- *                 $ref: '#/components/schemas/Item'
- *       500:
- *         description: Failed to load inventory
- */
 app.get('/inventory', async (req, res) => {
-  try{
+  try {
     const inventory = await readInventory();
-    res.status(200).json(inventory)
+    res.status(200).json(inventory);
   } catch (err) {
     console.error('Err');
     res.status(500).send('Failed to load JSON');
   }
-})
-
-/**
- * @swagger
- * /inventory/{id}:
- *   get:
- *     summary: Get item by ID
- *     parameters:
- *       - in: path
- *         name: id
- *         required: true
- *         schema:
- *           type: string
- *           format: uuid
- *     responses:
- *       200:
- *         description: Item details
- *         content:
- *           application/json:
- *             schema:
- *               $ref: '#/components/schemas/Item'
- *       400:
- *         description: Invalid ID format
- *       404:
- *         description: Item not found
- *       500:
- *         description: Internal server error
- */
-app.get('/inventory/:id', async (req, res) => {
-    const { id } = req.params;
-    
-    if (!isUuidV4(id)) {
-      return res.status(400).json({ message: "Ivalid id format(bad Request)" });
-    }
-
-    try {
-      const items = await readInventory();
-      const item = items.find(i => i.id === id);
-
-      if(!item) {
-        return res.status(404).json({ message: 'Ited not found (404)' })
-      }
-
-      return res.json(item);
-    } catch (err) {
-      console.error("Error in get /item/:id");
-      return res.status(500).send('Internal server Error');
-    }
 });
 
-/**
- * @swagger
- * /inventory/{id}:
- *   put:
- *     summary: Update item name or description
- *     parameters:
- *       - in: path
- *         name: id
- *         required: true
- *         schema:
- *           type: string
- *           format: uuid
- *     requestBody:
- *       required: true
- *       content:
- *         application/json:
- *           schema:
- *             type: object
- *             properties:
- *               name:
- *                 type: string
- *               description:
- *                 type: string
- *     responses:
- *       200:
- *         description: Item updated successfully
- *       400:
- *         description: Invalid ID or nothing to update
- *       404:
- *         description: Item not found
- *       500:
- *         description: Server error
- */
+app.get('/inventory/:id', async (req, res) => {
+  const { id } = req.params;
+    
+  if (!isUuidV4(id)) {
+    return res.status(400).json({ message: "Invalid id format (Bad Request)" });
+  }
+
+  try {
+    const items = await readInventory();
+    const item = items.find(i => i.id === id);
+
+    if (!item) {
+      return res.status(404).json({ message: 'Item not found (404)' });
+    }
+
+    return res.json(item);
+  } catch (err) {
+    console.error("Error in get /inventory/:id");
+    return res.status(500).send('Internal server Error');
+  }
+});
+
 app.put('/inventory/:id', async (req, res) => {
   const { id } = req.params;
     
   if (!isUuidV4(id)) {
-    return res.status(400).json({ message: "Ivalid id format(bad Request)" });
+    return res.status(400).json({ message: "Invalid id format (Bad Request)" });
   }
   try {
     const items = await readInventory();
@@ -339,7 +263,7 @@ app.put('/inventory/:id', async (req, res) => {
 
     const { name, description } = req.body;
 
-    if(!name && !description) {
+    if (!name && !description) {
       return res.status(400).json({ message: "Nothing to update" });
     }
 
@@ -353,124 +277,65 @@ app.put('/inventory/:id', async (req, res) => {
 
     await saveInventory(items);
 
-    return res.status(200).json({Message: "Item updated", item: items[index]})
+    return res.status(200).json({Message: "Item updated", item: items[index]});
   } catch (err) {
-    console.error('Error in updating Name or description')
-    res.status(500).send('Server Error')
+    console.error('Error in updating Name or description');
+    res.status(500).send('Server Error');
   } 
-}) 
+});
 
-/**
- * @swagger
- * /inventory/{id}/photo:
- *   get:
- *     summary: Get item photo
- *     parameters:
- *       - in: path
- *         name: id
- *         required: true
- *         schema:
- *           type: string
- *           format: uuid
- *     responses:
- *       200:
- *         description: Photo file
- *         content:
- *           image/jpeg:
- *             schema:
- *               type: string
- *               format: binary
- *       400:
- *         description: Invalid ID format
- *       404:
- *         description: Photo not found
- *       500:
- *         description: Server error
- */
 app.get('/inventory/:id/photo', async (req, res) => {
-    const { id } = req.params;
+  const { id } = req.params;
     
-    if (!isUuidV4(id)) {
-      return res.status(400).json({ message: "Ivalid id format(bad Request)" });
+  if (!isUuidV4(id)) {
+    return res.status(400).json({ message: "Invalid id format (Bad Request)" });
+  }
+
+  try {
+    const items = await readInventory();
+    const item = items.find(i => i.id === id);
+
+    if (!item || !item.photo) {
+      return res.status(404).json({ message: "Photo not found (404)" });
     }
 
-    try{
-      const items = await readInventory();
-      const item = items.find(i => i.id === id);
-
-      if(!item || !item.photo) {
-        return res.status(404).json({ message: "Photo not found(404)" })
-      }
-
-      const filename = path.basename(item.photo);
-      const filePath = path.join(cacheDir, filename);
+    const filename = path.basename(item.photo);
+    const filePath = path.join(cacheDir, filename);
       
-      res.type('image/jpeg')
-      return res.sendFile(filePath);
-    } catch (err){
-      console.error("Error in GET /inventory/:id/photo", err);
-      return res.status(500).send('Server Error');
-    }
-})
+    res.type('image/jpeg');
+    return res.sendFile(filePath);
+  } catch (err){
+    console.error("Error in GET /inventory/:id/photo", err);
+    return res.status(500).send('Server Error');
+  }
+});
 
-/**
- * @swagger
- * /inventory/{id}/photo:
- *   put:
- *     summary: Update item photo
- *     parameters:
- *       - in: path
- *         name: id
- *         required: true
- *         schema:
- *           type: string
- *           format: uuid
- *     requestBody:
- *       required: true
- *       content:
- *         multipart/form-data:
- *           schema:
- *             type: object
- *             required:
- *               - photo
- *             properties:
- *               photo:
- *                 type: string
- *                 format: binary
- *     responses:
- *       200:
- *         description: Photo updated successfully
- *       400:
- *         description: Invalid ID or photo required
- *       404:
- *         description: Item not found
- *       500:
- *         description: Server error
- */
 app.put('/inventory/:id/photo', upload.single('photo'), async (req, res) => {
   const { id } = req.params;
     
   if (!isUuidV4(id)) {
-    return res.status(400).json({ message: "Ivalid id format(bad Request)" });
-  } try{
+    return res.status(400).json({ message: "Invalid id format (Bad Request)" });
+  }
+
+  try {
     const items = await readInventory();
     const index = items.findIndex(item => item.id === id);
 
-    if(index === -1){
-      return res.status(404).json({ message: "not Found (404)" });
+    if (index === -1) {
+      return res.status(404).json({ message: "Not found (404)" });
     }
 
     if (!req.file) {
       return res.status(400).json({message: 'Photo file is required'});
     }
 
-    const oldPhotoUrl = items[index].photo
+    const oldPhotoUrl = items[index].photo;
     if (oldPhotoUrl) {
       const oldFilename = path.basename(oldPhotoUrl);
       const oldFilePath = path.join(cacheDir, oldFilename);
 
       try {
-        await fsp.unlink(oldFilePath)
+        await fsp.unlink(oldFilePath);
       } catch (err) {
         console.error("Cannot delete old photo: ", err.message);
       }
@@ -487,35 +352,13 @@ app.put('/inventory/:id/photo', upload.single('photo'), async (req, res) => {
     console.error("error in updating photo", err);
     return res.status(500).send("Error in put(photo)");
   }
-})
+});
 
-/**
- * @swagger
- * /inventory/{id}:
- *   delete:
- *     summary: Delete inventory item
- *     parameters:
- *       - in: path
- *         name: id
- *         required: true
- *         schema:
- *           type: string
- *           format: uuid
- *     responses:
- *       200:
- *         description: Item deleted successfully
- *       400:
- *         description: Invalid ID format
- *       404:
- *         description: Item not found
- *       500:
- *         description: Internal server error
- */
 app.delete('/inventory/:id', async (req, res) => {
   const { id } = req.params;
 
   if (!isUuidV4(id)) {
-    return res.status(400).json({ message: "Ivalid id format(bad Request)" });
+    return res.status(400).json({ message: "Invalid id format (Bad Request)" });
   }
 
   try {
@@ -523,7 +366,7 @@ app.delete('/inventory/:id', async (req, res) => {
 
     const index = items.findIndex(item => item.id === id);
     if (index === -1){
-      console.error('Error 404 not found item to delete')
+      console.error('Error 404 not found item to delete');
       return res.status(404).json({message: 'Error 404, not found'});
     }
 
@@ -540,6 +383,7 @@ app.delete('/inventory/:id', async (req, res) => {
         console.error('Cannot delete photofile: ', err.message);
       }
     }  
+
     items.splice(index, 1);
 
     await saveInventory(items);
@@ -548,91 +392,57 @@ app.delete('/inventory/:id', async (req, res) => {
     console.error('Error in delete /inventory/:id', err);
     return res.status(500).send('Internal Server Error');
   }
-})
-
-/**
- * @swagger
- * /search:
- *   post:
- *     summary: Search item by ID with optional photo
- *     requestBody:
- *       required: true
- *       content:
- *         application/x-www-form-urlencoded:
- *           schema:
- *             type: object
- *             required:
- *               - id
- *             properties:
- *               id:
- *                 type: string
- *                 format: uuid
- *               has_photo:
- *                 type: string
- *                 enum: [on, true, false]
- *     responses:
- *       200:
- *         description: Item found
- *         content:
- *           application/json:
- *             schema:
- *               $ref: '#/components/schemas/Item'
- *       400:
- *         description: Invalid or missing ID
- *       404:
- *         description: Item or photo not found
- *       500:
- *         description: Internal server error
- */
-app.post('/search', async (req, res) => {
-  const { id, has_photo } = req.body;
-
-  if (!id) {
-    return res.status(400).json({ message: "Field 'id' is required (400)" });
-  }
-
-  if (!isUuidV4(id)) {
-    return res.status(400).json({ message: "Invalid id format (Bad Request)" });
-  }
-
-  try {
-    const items = await readInventory();
-    const item = items.find(i => i.id === id);
-
-    if (!item) {
-      return res.status(404).json({ message: 'Item not found (404)' });
-    }
-
-    const hasPhotoFlag =
-      has_photo === 'on' ||
-      has_photo === 'true' ||
-      has_photo === true;
-
-    if (hasPhotoFlag) {
-      if (!item.photo) {
-        return res.status(404).json({ message: 'Photo not found (404)' });
-      }
-
-      return res.status(200).json({
-        id: item.id,
-        name: item.name,
-        description: item.description || "",
-        photo: item.photo
-      });
-    }
-
-    const result = {
-      id: item.id,
-      name: item.name,
-      description: item.description || ""
-    };
-
-    return res.status(200).json(result);
-  } catch (err) {
-    console.error("Error in POST /search: ", err);
-    return res.status(500).send("Internal Server ERROR");
-  }
 });
+
+// app.post('/search', async (req, res) => {
+//   const { id, has_photo } = req.body;
+
+//   if (!id) {
+//     return res.status(400).json({ message: "Field 'id' is required (400)" });
+//   }
+
+//   if (!isUuidV4(id)) {
+//     return res.status(400).json({ message: "Invalid id format (Bad Request)" });
+//   }
+
+//   try {
+//     const items = await readInventory();
+//     const item = items.find(i => i.id === id);
+
+//     if (!item) {
+//       return res.status(404).json({ message: 'Item not found (404)' });
+//     }
+
+//     const hasPhotoFlag =
+//       has_photo === 'on' ||
+//       has_photo === 'true' ||
+//       has_photo === true;
+
+//     if (hasPhotoFlag) {
+//       if (!item.photo) {
+//         return res.status(404).json({ message: 'Photo not found (404)' });
+//       }
+
+//       return res.status(200).json({
+//         id: item.id,
+//         name: item.name,
+//         description: item.description || "",
+//         photo: item.photo
+//       });
+//     }
+
+//     const result = {
+//       id: item.id,
+//       name: item.name,
+//       description: item.description || ""
+//     };
+
+//     return res.status(200).json(result);
+//   } catch (err) {
+//     console.error("Error in POST /search: ", err);
+//     return res.status(500).send("Internal Server ERROR");
+//   }
+// });
 
 
 app.all('/register', (req, res) => {
@@ -641,7 +451,7 @@ app.all('/register', (req, res) => {
 
 app.all('/inventory', (req, res) => {
   return res.status(405).send('Method Not Allowed');
-});
+})
 
 app.all('/inventory/:id', (req, res) => {
   return res.status(405).send('Method Not Allowed');
@@ -651,11 +461,9 @@ app.all('/inventory/:id/photo', (req, res) => {
   return res.status(405).send('Method Not Allowed');
 });
 
-app.all('/search', (req, res) => {
-  return res.status(405).send('Method Not Allowed');
-});
-
-
+// app.all('/search', (req, res) => {
+//   return res.status(405).send('Method Not Allowed');
+// });
 
 app.listen(port, host, () => {
   console.log(`server is working on http://${host}:${port}`);
